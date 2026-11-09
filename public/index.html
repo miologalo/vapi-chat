@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vAPI Chat</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #0f1115; color: #e6e6e6; height: 100dvh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #171a21; border-bottom: 1px solid #262b36; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; }
+  header h1 span { color: #7aa2ff; }
+  header p { font-size: 12px; color: #9aa3b2; }
+  #settings { background: #171a21; border-bottom: 1px solid #262b36; padding: 12px 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #settings input { background: #0f1115; border: 1px solid #2c3340; color: #e6e6e6; border-radius: 8px; padding: 9px 10px; font-size: 14px; outline: none; }
+  #settings input:focus { border-color: #7aa2ff; }
+  #apiKey { flex: 2; min-width: 220px; }
+  #model { flex: 1; min-width: 200px; }
+  button { background: #2f6bff; color: #fff; border: none; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #2458d6; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; border: 1px solid #2c3340; color: #c8cdd8; }
+  button.ghost:hover { background: #1e232e; }
+  #note { width: 100%; font-size: 12px; color: #9aa3b2; }
+  #note b { color: #c8cdd8; }
+  #status { width: 100%; font-size: 12px; min-height: 16px; }
+  #status.ok { color: #58c98a; }
+  #status.err { color: #ff7a7a; }
+  #chat { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 860px; width: 100%; margin: 0 auto; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; line-height: 1.55; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: #2f6bff; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: #1e232e; border: 1px solid #262b36; border-bottom-left-radius: 4px; }
+  .msg.thinking { color: #9aa3b2; font-style: italic; }
+  .msg .meta { font-size: 11px; color: #8b93a3; margin-top: 6px; }
+  .msg.user .meta { color: #c9d8ff; }
+  #composer { padding: 12px 16px 16px; background: #171a21; border-top: 1px solid #262b36; }
+  #composerRow { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
+  #input { flex: 1; background: #0f1115; border: 1px solid #2c3340; color: #e6e6e6; border-radius: 10px; padding: 11px 12px; font-size: 15px; outline: none; resize: none; font-family: inherit; min-height: 44px; max-height: 140px; }
+  #input:focus { border-color: #7aa2ff; }
+  #empty { text-align: center; color: #8b93a3; margin: auto; font-size: 14px; line-height: 1.7; }
+  #empty b { color: #c8cdd8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>💬 vAPI <span>Chat</span></h1>
+  <p>Chat with any model on the vAPI Router</p>
+</header>
+
+<div id="settings">
+  <input id="apiKey" type="password" placeholder="Paste your vAPI router key (sk-...)" autocomplete="off" spellcheck="false">
+  <button id="toggleKey" class="ghost" type="button">Show</button>
+  <input id="model" type="text" value="venice/deepseek-v4-flash" placeholder="Model, e.g. venice/deepseek-v4-flash" spellcheck="false">
+  <button id="saveBtn" type="button">Save</button>
+  <button id="clearBtn" class="ghost" type="button">Clear chat</button>
+  <div id="note">🔒 Key sudhu <b>tomar browser-e</b> save thake (localStorage). Server-e kokhono save hoy na — prottek message-e sudhu router-e pathano hoy.</div>
+  <div id="status"></div>
+</div>
+
+<div id="chat">
+  <div id="empty">👋 API key bosiye <b>Save</b> dao, tarpor niche likhe chat koro.<br>Default model: <b>venice/deepseek-v4-flash</b> — model-er nam bodle onno model-o use korte parba.</div>
+</div>
+
+<div id="composer">
+  <div id="composerRow">
+    <textarea id="input" rows="1" placeholder="Message likho... (Enter = send, Shift+Enter = new line)"></textarea>
+    <button id="sendBtn" type="button">Send</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const chatEl = $("chat"), inputEl = $("input"), statusEl = $("status");
+let messages = [];
+
+function loadSaved() {
+  try {
+    const k = localStorage.getItem("vapi_router_key");
+    const m = localStorage.getItem("vapi_router_model");
+    if (k) $("apiKey").value = k;
+    if (m) $("model").value = m;
+  } catch (e) {}
+  updateStatus();
+}
+function updateStatus() {
+  const has = !!$("apiKey").value.trim();
+  statusEl.textContent = has ? "✓ API key set — ready to chat" : "⚠ API key boshao, tarpor Save dao";
+  statusEl.className = has ? "ok" : "err";
+}
+function addMsg(role, text, meta) {
+  const empty = $("empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  if (meta) {
+    const m = document.createElement("div");
+    m.className = "meta";
+    m.textContent = meta;
+    div.appendChild(m);
+  }
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  const apiKey = $("apiKey").value.trim();
+  if (!apiKey) { statusEl.textContent = "⚠ Age API key boshao"; statusEl.className = "err"; $("apiKey").focus(); return; }
+  const model = $("model").value.trim() || "venice/deepseek-v4-flash";
+  messages.push({ role: "user", content: text });
+  addMsg("user", text);
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  $("sendBtn").disabled = true;
+  const thinking = addMsg("assistant thinking", "Thinking...");
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey, model, messages }),
+    });
+    const data = await r.json().catch(() => ({}));
+    thinking.remove();
+    if (!r.ok) {
+      addMsg("assistant", "❌ Error: " + (data.error || ("HTTP " + r.status)));
+      messages.pop();
+    } else {
+      messages.push({ role: "assistant", content: data.content });
+      const meta = data.usage ? (data.usage.total_tokens + " tokens" + (data.model ? " · " + data.model : "")) : (data.model || "");
+      addMsg("assistant", data.content, meta || undefined);
+      statusEl.textContent = "✓ Reply pelo";
+      statusEl.className = "ok";
+    }
+  } catch (e) {
+    thinking.remove();
+    addMsg("assistant", "❌ Network error: " + e.message);
+    messages.pop();
+  }
+  $("sendBtn").disabled = false;
+  inputEl.focus();
+}
+$("sendBtn").addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+inputEl.addEventListener("input", () => {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
+});
+$("saveBtn").addEventListener("click", () => {
+  try {
+    localStorage.setItem("vapi_router_key", $("apiKey").value.trim());
+    localStorage.setItem("vapi_router_model", $("model").value.trim());
+  } catch (e) {}
+  updateStatus();
+  statusEl.textContent = "✓ Saved — key tomar browser-ei thakbe";
+  statusEl.className = "ok";
+});
+$("toggleKey").addEventListener("click", () => {
+  const k = $("apiKey");
+  k.type = k.type === "password" ? "text" : "password";
+  $("toggleKey").textContent = k.type === "password" ? "Show" : "Hide";
+});
+$("clearBtn").addEventListener("click", () => {
+  messages = [];
+  chatEl.innerHTML = '<div id="empty">👋 Chat clear hoye gese. Notun kore likho.</div>';
+});
+$("apiKey").addEventListener("input", updateStatus);
+loadSaved();
+</script>
+</body>
+</html>
